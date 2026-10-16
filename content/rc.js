@@ -232,9 +232,17 @@ var ResearchCompanion = {
     let RB = Zotero.ReadingBilingual;
     if (!RB) return this.toast("没找到双语阅读插件（zotero-reading-bilingual）");
     if (RB.getAutoTranslate()) return this.toast("请先在双语插件设置里关掉「进入阅读模式时自动翻译」");
-    let pane = Zotero.getMainWindow().ZoteroPane;
-    let items = pane.getSelectedItems();
-    if (!items.length) items = pane.getSelectedCollection()?.getChildItems() || [];
+    // 在论文阅读页面点：只导出正在看的这一篇；在文库页面点：导出选中的条目，没选就导出当前分类
+    let win = Zotero.getMainWindow();
+    let items;
+    if (win.Zotero_Tabs.selectedType !== "library") {
+      let reader = Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
+      items = reader ? [Zotero.Items.get(reader.itemID)].filter(Boolean) : [];
+    }
+    else {
+      items = win.ZoteroPane.getSelectedItems();
+      if (!items.length) items = win.ZoteroPane.getSelectedCollection()?.getChildItems() || [];
+    }
     let pdfs = new Map();
     for (let it of items) {
       let ids = it.isPDFAttachment() ? [it.id] : it.isRegularItem() ? it.getAttachments() : [];

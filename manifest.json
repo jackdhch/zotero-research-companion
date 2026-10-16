@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "研究伴读 for Zotero",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "右侧栏用中文显示论文和你研究的关系；一键把论文调研清单导入成分类和标签。独立项目，与 Zotero 官方无关。",
   "author": "jackdhch",
   "icons": {

@@ -57,7 +57,7 @@ python3 -I tools/build_data.py 论文.json 改进清单.json research-companion.
 [zotero-reading-bilingual](https://github.com/tianlrz/zotero-reading-bilingual) 会把译文缓存在 PDF 旁边的 `xxx.bilingual.json` 里。用下面的流程可以拿任意模型提前翻好，之后打开论文时直接读缓存，不再联网：
 
 1. 在双语插件设置里关掉「进入阅读模式时自动翻译」。
-2. 选中几篇论文（或者点开一个分类），点「工具 → 研究伴读 → 导出选中论文的待翻段落」。插件会逐篇打开 PDF、切到阅读模式，让双语插件按它自己的规则挑出还没有译文的段落和表格，写到 `xxx.to-translate.json`，并在 Zotero 数据目录的 `research-companion-translate-queue.json` 里记一笔。整个过程不调用任何翻译接口。扫描版 PDF 出不了阅读模式，会被跳过。
+2. 点「工具 → 研究伴读 → 导出选中论文的待翻段落」：在论文阅读页面点，只导出正在看的这一篇；在文库页面点，导出选中的论文，什么都没选就导出当前分类里的全部论文。插件会逐篇打开 PDF、切到阅读模式，让双语插件按它自己的规则挑出还没有译文的段落和表格，写到 `xxx.to-translate.json`，并在 Zotero 数据目录的 `research-companion-translate-queue.json` 里记一笔。整个过程不调用任何翻译接口。扫描版 PDF 出不了阅读模式，会被跳过。
 3. `python3 -I tools/pretranslate.py prep 队列.json 工作目录`：每篇切成小批，每 5 篇一组。
 4. 每组交给一个翻译代理，代理按 `tools/translate_prompt.md` 的规则，把每个 `batch_NN.json` 译成 `batch_NN.zh.json`。
 5. `python3 -I tools/pretranslate.py merge-all 工作目录`：把译文写进各篇的 `xxx.bilingual.json`，翻完的论文从队列里删掉。

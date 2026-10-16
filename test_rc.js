@@ -111,7 +111,7 @@ const RC = vm.runInContext("ResearchCompanion", ctx);
   Zotero.Items.get = id => att[id] || items.get(id);
   Zotero.getMainWindow = () => ({
     ZoteroPane: { getSelectedItems: () => [paper, att[502]], getSelectedCollection: () => null },
-    Zotero_Tabs: { getTabIDByItemID: () => null, selectedID: "t" },
+    Zotero_Tabs: { getTabIDByItemID: () => null, selectedID: "t", selectedType: "library" },
   });
   Zotero.Reader = { open: async (id) => ({ att: att[id], _initPromise: null, _internalReader: { initializedPromise: null, _primarySDTView: null, async _handleReadingModeEnabledChange() { if (att[id].ok) this._primarySDTView = {}; } }, close() { closed.push(id); } }) };
   await RC.exportForTranslation();
@@ -122,5 +122,19 @@ const RC = vm.runInContext("ResearchCompanion", ctx);
   assert.strictEqual(RB.callOpenAIBatch, realBatch, "导出后恢复双语插件原函数");
   assert.deepStrictEqual(closed.sort(), [501, 502], "自己打开的标签页都关掉");
   assert.ok(lastLine.startsWith("完成：导出 1 篇，已全部有译文 0 篇，失败 1 篇"), lastLine);
+
+  // 在论文阅读页面点：只导出正在看的那篇，且不关掉它的标签页
+  delete files["/x/501.to-translate.json"];
+  closed.length = 0;
+  const openReader = { itemID: 502 };
+  Zotero.getMainWindow = () => ({
+    ZoteroPane: { getSelectedItems: () => [paper], getSelectedCollection: () => null },
+    Zotero_Tabs: { getTabIDByItemID: (id) => id === 502 ? "r" : null, selectedID: "r", selectedType: "reader" },
+  });
+  Zotero.Reader.getByTabID = () => openReader;
+  att[502].ok = true;
+  await RC.exportForTranslation();
+  assert.ok("/x/502.to-translate.json" in files && !("/x/501.to-translate.json" in files), "只导出正在看的那篇");
+  assert.deepStrictEqual(closed, [], "用户自己打开的论文不关");
   console.log("rc ok");
 })().catch(e => { console.error(e); process.exit(1); });
