@@ -36,6 +36,7 @@ var ResearchCompanion = {
         menus: [
           { menuType: "menuitem", l10nID: "rc-menu-import", onCommand: () => this.importAll() },
           { menuType: "menuitem", l10nID: "rc-menu-reload", onCommand: () => this.loadData(true) },
+          { menuType: "menuitem", l10nID: "rc-menu-export", onCommand: () => this.exportForTranslation() },
         ],
       }],
     });
@@ -218,6 +219,111 @@ var ResearchCompanion = {
     if (parentID) c.parentID = parentID;
     await c.saveTx();
     return c;
+  },
+
+  get queuePath() {
+    return Zotero.DataDirectory.dir + (Zotero.isWin ? "\\" : "/") + "research-companion-translate-queue.json";
+  },
+
+  // 选中的条目（没选就用当前分类）里的 PDF：逐篇打开、切阅读模式，让双语插件按它自己的规则挑出
+  // 还没有译文的段落和表格，写到 PDF 旁边的 xxx.to-translate.json，并把清单记进队列文件。
+  // 全程不调用翻译接口。依赖 zotero-reading-bilingual 1.6.3 的内部函数。
+  async exportForTranslation() {
+    let RB = Zotero.ReadingBilingual;
+    if (!RB) return this.toast("没找到双语阅读插件（zotero-reading-bilingual）");
+    if (RB.getAutoTranslate()) return this.toast("请先在双语插件设置里关掉「进入阅读模式时自动翻译」");
+    let pane = Zotero.getMainWindow().ZoteroPane;
+    let items = pane.getSelectedItems();
+    if (!items.length) items = pane.getSelectedCollection()?.getChildItems() || [];
+    let pdfs = new Map();
+    for (let it of items) {
+      let ids = it.isPDFAttachment() ? [it.id] : it.isRegularItem() ? it.getAttachments() : [];
+      for (let id of ids) {
+        let a = Zotero.Items.get(id);
+        if (a?.isPDFAttachment()) pdfs.set(a.id, a);
+      }
+    }
+    if (!pdfs.size) return this.toast("先选中论文，或点开一个分类");
+
+    let pw = new Zotero.ProgressWindow({ closeOnClick: false });
+    pw.changeHeadline("研究伴读：导出待翻段落");
+    pw.show();
+    let line = new pw.ItemProgress(null, `共 ${pdfs.size} 个 PDF`);
+    let queue = [];
+    try { queue = JSON.parse(await Zotero.File.getContentsAsync(this.queuePath)); } catch (e) {}
+    let stats = { exported: 0, done: 0, failed: 0 };
+    let n = 0;
+    for (let att of pdfs.values()) {
+      n++;
+      line.setText(`${n}/${pdfs.size}　${att.parentItem?.getField("title") || att.getField("title")}`);
+      try {
+        let r = await this.exportOne(RB, att);
+        if (!r) stats.failed++;
+        else if (!r.count) stats.done++;
+        else {
+          stats.exported++;
+          queue = queue.filter(q => q.path !== r.path);
+          queue.push({ path: r.path, itemID: att.id, paragraphs: r.paragraphs, tables: r.tables });
+          await Zotero.File.putContentsAsync(this.queuePath, JSON.stringify(queue, null, 1));
+        }
+      }
+      catch (e) {
+        stats.failed++;
+        Zotero.logError(`[研究伴读] 导出失败：${att.getField("title")}：${e}`);
+      }
+      line.setProgress(Math.round(n / pdfs.size * 100));
+    }
+    line.setText(`完成：导出 ${stats.exported} 篇，已全部有译文 ${stats.done} 篇，失败 ${stats.failed} 篇（多为扫描版 PDF）`);
+    pw.startCloseTimer(15000);
+  },
+
+  // 返回 { path, count, paragraphs, tables }；阅读模式等不出来返回 null
+  async exportOne(RB, att, timeoutMs = 180000) {
+    let win = Zotero.getMainWindow();
+    let wasOpen = !!win.Zotero_Tabs.getTabIDByItemID(att.id);
+    let reader = await Zotero.Reader.open(att.id) || Zotero.Reader.getByTabID(win.Zotero_Tabs.selectedID);
+    if (!reader) return null;
+    try {
+      await reader._initPromise;
+      let internal = reader._internalReader;
+      await internal.initializedPromise;
+      // 这一步会等 PDF 转成文字；转不出来（扫描版）时阅读模式视图仍为空，直接跳过
+      if (!internal._primarySDTView) await internal._handleReadingModeEnabledChange(true);
+      if (!internal._primarySDTView) return null;
+      // 和双语插件自动翻译的判断一致：#sdt-content 里出现段落才算阅读模式就绪
+      let doc = null;
+      for (let t = 0; t < timeoutMs && !doc; t += 1000) {
+        await Zotero.Promise.delay(1000);
+        let d = RB.getRealContentDoc(reader);
+        if (d?.querySelector("#sdt-content p")) doc = d;
+      }
+      if (!doc) return null;
+
+      let paras = [], tables = [], keep = {};
+      let names = ["callOpenAIBatch", "callGeminiBatch", "callModelText", "translateTableBlock", "translateTocBlock", "translateRoadmapTogether"];
+      for (let k of names) keep[k] = RB[k];
+      RB.callOpenAIBatch = RB.callGeminiBatch = async (t) => { paras.push(...t); throw new Error("仅导出"); };
+      RB.callModelText = async () => { throw new Error("仅导出"); };
+      RB.translateTableBlock = async (b) => { if (b?.text) tables.push(b.text); };
+      RB.translateTocBlock = RB.translateRoadmapTogether = async () => {};
+      try {
+        await RB.translateReader(reader, doc, true, false);
+        await Zotero.Promise.delay(3000); // 侧栏目录那条异步调用也要撞上假接口
+      }
+      finally {
+        Object.assign(RB, keep);
+        doc.querySelectorAll(".zotero-bilingual-card").forEach((c) => { if (/仅导出/.test(c.textContent)) c.remove(); });
+      }
+      let path = (await RB.getCacheFilePath(reader)).replace(/\.bilingual\.json$/, ".to-translate.json");
+      let count = paras.length + tables.length;
+      if (count) {
+        await Zotero.File.putContentsAsync(path, JSON.stringify({ itemID: att.id, paragraphs: paras, tables }, null, 1));
+      }
+      return { path, count, paragraphs: paras.length, tables: tables.length };
+    }
+    finally {
+      if (!wasOpen) reader.close();
+    }
   },
 
   async linkLocalPDF(item, p) {

@@ -8,3 +8,5 @@ rc-menu-import =
     .label = Import literature survey
 rc-menu-reload =
     .label = Reload data file
+rc-menu-export =
+    .label = Export untranslated paragraphs of selected items

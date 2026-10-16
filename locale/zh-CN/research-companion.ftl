@@ -8,3 +8,5 @@ rc-menu-import =
     .label = 导入论文调研清单
 rc-menu-reload =
     .label = 重新读取数据文件
+rc-menu-export =
+    .label = 导出选中论文的待翻段落

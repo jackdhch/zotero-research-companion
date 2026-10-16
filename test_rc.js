@@ -11,6 +11,7 @@ let nextID = 100, items = new Map(), atts = new Map(), collections = [];
 class Item {
   constructor(type) { this.itemType = type; this.fields = {}; this.tags = new Set(); this.cols = new Set(); this.creators = []; this.atts = []; }
   isRegularItem() { return true; }
+  isPDFAttachment() { return false; }
   getField(f) { return this.fields[f] || ""; }
   setField(f, v) { this.fields[f] = v; }
   setCreators(c) { this.creators = c; }
@@ -27,7 +28,12 @@ existing.saveTx();
 
 const Zotero = {
   DataDirectory: { dir: "/tmp" }, isWin: false, Libraries: { userLibraryID: 1 },
-  File: { getContentsAsync: async () => JSON.stringify(data), pathToFile: p => ({ exists: () => p.endsWith("have.pdf") }) },
+  File: {
+    getContentsAsync: async (p) => { if (p in files) return files[p]; if (p.endsWith("queue.json")) throw new Error("无"); return JSON.stringify(data); },
+    putContentsAsync: async (p, s) => { files[p] = s; },
+    pathToFile: p => ({ exists: () => p.endsWith("have.pdf") }),
+  },
+  Promise: { delay: async () => {} },
   Items: { getAll: async () => [...items.values()], getAsync: async id => items.get(id), get: id => items.get(id) || atts.get(id) },
   Item,
   ItemTypes: { getID: t => t },
@@ -41,6 +47,7 @@ const Zotero = {
   ItemPaneManager: { registerSection: () => "pane" }, MenuManager: { registerMenu: () => "menu" },
 };
 let lastLine = "";
+const files = {};
 const data = {
   collection: "论文调研_测试",
   airframe: { A1: { title: "统一弦长", what: "量实物", priority: "P0" } },
@@ -85,5 +92,35 @@ const RC = vm.runInContext("ResearchCompanion", ctx);
   assert.strictEqual(collections.length, 5);
   assert.ok(wig.tags.has("核实/已核实") && !wig.tags.has("核实/未核实"), [...wig.tags].join(","));
   assert.strictEqual(existing.atts.length, 1);
+
+  // 导出待翻段落：选中一篇论文（带 PDF）+ 一个扫描版 PDF（阅读模式出不来）
+  const pdf = (id, ok) => ({ id, ok, isPDFAttachment: () => true, getField: () => "pdf" + id });
+  const att = { 501: pdf(501, true), 502: pdf(502, false) };
+  const paper = new Item("journalArticle"); paper.fields.title = "论文"; paper.atts = [501];
+  const closed = [];
+  const doc = { querySelector: () => ({}), querySelectorAll: () => [] };
+  const RB = {
+    getAutoTranslate: () => false,
+    getRealContentDoc: (r) => r.att.ok ? doc : null,
+    async translateReader() { try { await this.callOpenAIBatch(["段一", "段二"]); } catch (e) {} await this.translateTableBlock({ text: "表一" }); },
+    callOpenAIBatch: async () => ["真翻译"], translateTableBlock: async () => {}, callGeminiBatch() {}, callModelText() {}, translateTocBlock() {}, translateRoadmapTogether() {},
+    getCacheFilePath: async (r) => `/x/${r.att.id}.bilingual.json`,
+  };
+  const realBatch = RB.callOpenAIBatch;
+  Zotero.ReadingBilingual = RB;
+  Zotero.Items.get = id => att[id] || items.get(id);
+  Zotero.getMainWindow = () => ({
+    ZoteroPane: { getSelectedItems: () => [paper, att[502]], getSelectedCollection: () => null },
+    Zotero_Tabs: { getTabIDByItemID: () => null, selectedID: "t" },
+  });
+  Zotero.Reader = { open: async (id) => ({ att: att[id], _initPromise: null, _internalReader: { initializedPromise: null, _primarySDTView: null, async _handleReadingModeEnabledChange() { if (att[id].ok) this._primarySDTView = {}; } }, close() { closed.push(id); } }) };
+  await RC.exportForTranslation();
+  assert.deepStrictEqual(JSON.parse(files["/x/501.to-translate.json"]), { itemID: 501, paragraphs: ["段一", "段二"], tables: ["表一"] });
+  assert.ok(!("/x/502.to-translate.json" in files), "扫描版不导出");
+  const q = JSON.parse(files["/tmp/research-companion-translate-queue.json"]);
+  assert.deepStrictEqual(q, [{ path: "/x/501.to-translate.json", itemID: 501, paragraphs: 2, tables: 1 }]);
+  assert.strictEqual(RB.callOpenAIBatch, realBatch, "导出后恢复双语插件原函数");
+  assert.deepStrictEqual(closed.sort(), [501, 502], "自己打开的标签页都关掉");
+  assert.ok(lastLine.startsWith("完成：导出 1 篇，已全部有译文 0 篇，失败 1 篇"), lastLine);
   console.log("rc ok");
 })().catch(e => { console.error(e); process.exit(1); });
