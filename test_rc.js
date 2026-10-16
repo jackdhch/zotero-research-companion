@@ -29,7 +29,7 @@ existing.saveTx();
 const Zotero = {
   DataDirectory: { dir: "/tmp" }, isWin: false, Libraries: { userLibraryID: 1 },
   File: {
-    getContentsAsync: async (p) => { if (p in files) return files[p]; if (p.endsWith("queue.json")) throw new Error("无"); return JSON.stringify(data); },
+    getContentsAsync: async (p) => { if (p in files) return files[p]; if (/(queue|done)\.json$/.test(p)) throw new Error("无"); return JSON.stringify(data); },
     putContentsAsync: async (p, s) => { files[p] = s; },
     pathToFile: p => ({ exists: () => p.endsWith("have.pdf") }),
   },
@@ -45,8 +45,10 @@ const Zotero = {
     get ItemProgress() { return class { setProgress() {} setText(t) { lastLine = t; } }; } },
   debug() {}, logError(e) { throw new Error(e); },
   ItemPaneManager: { registerSection: () => "pane" }, MenuManager: { registerMenu: () => "menu" },
+  ItemTreeManager: { registerColumn: (o) => { column = o; return o.dataKey; }, refreshColumns: () => { refreshed++; } },
+  getMainWindow: () => ({ setInterval: () => 1 }),
 };
-let lastLine = "";
+let lastLine = "", column = null, refreshed = 0;
 const files = {};
 const data = {
   collection: "论文调研_测试",
@@ -121,6 +123,13 @@ const RC = vm.runInContext("ResearchCompanion", ctx);
   assert.deepStrictEqual(q, [{ path: "/x/501.to-translate.json", itemID: 501, paragraphs: 2, tables: 1 }]);
   assert.strictEqual(RB.callOpenAIBatch, realBatch, "导出后恢复双语插件原函数");
   assert.deepStrictEqual(closed.sort(), [501, 502], "自己打开的标签页都关掉");
+  assert.strictEqual(column.dataProvider(paper), "待翻译", "导出后「译文」列显示待翻译");
+  // 外面翻完：done 文件写入 501、队列清空 → 列显示已翻译
+  files["/tmp/research-companion-translate-done.json"] = "[501]";
+  files["/tmp/research-companion-translate-queue.json"] = "[]";
+  await RC.loadStatus();
+  assert.strictEqual(column.dataProvider(paper), "✓ 已翻译");
+  assert.strictEqual(column.dataProvider(existing), "", "没导出过的空着");
   assert.ok(lastLine.startsWith("完成：导出 1 篇，已全部有译文 0 篇，失败 1 篇"), lastLine);
 
   // 在论文阅读页面点：只导出正在看的那篇，且不关掉它的标签页

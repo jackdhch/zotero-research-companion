@@ -76,8 +76,13 @@ def merge_all(root):
         if not missing:
             done.add(p['src'])
     queue = json.load(open(g['queue'], encoding='utf-8'))
+    finished = [q['itemID'] for q in queue if wsl(q['path']) in done and 'itemID' in q]
     queue = [q for q in queue if wsl(q['path']) not in done]
     json.dump(queue, open(g['queue'], 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+    # 研究伴读「译文」列读这个文件显示「✓ 已翻译」
+    done_path = os.path.join(os.path.dirname(g['queue']), 'research-companion-translate-done.json')
+    old = json.load(open(done_path)) if os.path.exists(done_path) else []
+    json.dump(sorted(set(old) | set(finished)), open(done_path, 'w'))
     return report, len(queue)
 
 
@@ -104,13 +109,14 @@ def demo():
         json.dump({'itemID': 1, 'paragraphs': ['x' + name], 'tables': []}, open(f, 'w'))
         srcs.append(f)
     qp = f'{t}/queue.json'
-    json.dump([{'path': f} for f in srcs] + [{'path': f'{t}/gone.to-translate.json'}], open(qp, 'w'))
+    json.dump([{'path': f, 'itemID': n} for n, f in enumerate(srcs, 11)] + [{'path': f'{t}/gone.to-translate.json'}], open(qp, 'w'))
     assert prep(qp, f'{t}/root', 5) == (2, 1)
     g = json.load(open(f'{t}/root/groups.json'))
     json.dump(['译b'], open(g['papers'][0]['work'] + '/batch_00.zh.json', 'w'))
     report, left = merge_all(f'{t}/root')
     assert [r[1] for r in report] == [1, 0] and left == 2, (report, left)  # c 没翻完、gone 文件不在，都留在队列
     assert json.load(open(f'{t}/b.bilingual.json'))['translations'] == {'xb': '译b'}
+    assert json.load(open(f'{t}/research-companion-translate-done.json')) == [11], '翻完的记进 done'
     print('demo ok')
 
 

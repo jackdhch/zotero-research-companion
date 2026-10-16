@@ -35,16 +35,67 @@ var ResearchCompanion = {
         l10nID: "rc-menu",
         menus: [
           { menuType: "menuitem", l10nID: "rc-menu-import", onCommand: () => this.importAll() },
-          { menuType: "menuitem", l10nID: "rc-menu-reload", onCommand: () => this.loadData(true) },
+          { menuType: "menuitem", l10nID: "rc-menu-reload", onCommand: () => { this.loadData(true); this.loadStatus(); } },
           { menuType: "menuitem", l10nID: "rc-menu-export", onCommand: () => this.exportForTranslation() },
         ],
       }],
     });
+
+    this.columnKey = Zotero.ItemTreeManager.registerColumn({
+      dataKey: "rc-translated",
+      label: "译文",
+      pluginID: id,
+      flex: 0,
+      width: "80",
+      dataProvider: (item) => this.translateLabel(item),
+    });
+    await this.loadStatus();
+    // 翻译在 Zotero 外面做完会改 done 文件，每分钟看一眼，变了就刷新这一列
+    let win = Zotero.getMainWindow();
+    if (win) this.timer = { win, id: win.setInterval(() => this.loadStatus(), 60000) };
   },
 
   shutdown() {
     if (this.paneID) Zotero.ItemPaneManager.unregisterSection(this.paneID);
     if (this.menuID) Zotero.MenuManager.unregisterMenu(this.menuID);
+    if (this.columnKey) Zotero.ItemTreeManager.unregisterColumn(this.columnKey);
+    if (this.timer) this.timer.win.clearInterval(this.timer.id);
+  },
+
+  // 文库列表「译文」列：attachment itemID → "done" | "todo"，来自 done / queue 两个文件
+  status: new Map(),
+
+  get donePath() {
+    return Zotero.DataDirectory.dir + (Zotero.isWin ? "\\" : "/") + "research-companion-translate-done.json";
+  },
+
+  async readJSON(path, fallback) {
+    try { return JSON.parse(await Zotero.File.getContentsAsync(path)); }
+    catch (e) { return fallback; }
+  },
+
+  async loadStatus() {
+    let m = new Map();
+    for (let id of await this.readJSON(this.donePath, [])) m.set(id, "done");
+    for (let q of await this.readJSON(this.queuePath, [])) m.set(q.itemID, "todo");
+    let key = JSON.stringify([...m]);
+    if (key === this._statusKey) return;
+    this._statusKey = key;
+    this.status = m;
+    Zotero.ItemTreeManager.refreshColumns();
+  },
+
+  translateLabel(item) {
+    let ids = item.isRegularItem() ? item.getAttachments() : [item.id];
+    let s = ids.map(id => this.status.get(id));
+    return s.includes("done") ? "✓ 已翻译" : s.includes("todo") ? "待翻译" : "";
+  },
+
+  async setDone(attID, done) {
+    let list = new Set(await this.readJSON(this.donePath, []));
+    if (done === list.has(attID)) return;
+    done ? list.add(attID) : list.delete(attID);
+    await Zotero.File.putContentsAsync(this.donePath, JSON.stringify([...list]));
   },
 
   async loadData(notify) {
@@ -266,8 +317,15 @@ var ResearchCompanion = {
       line.setText(`${n}/${pdfs.size}　${att.parentItem?.getField("title") || att.getField("title")}`);
       try {
         let r = await this.exportOne(RB, att);
+        if (r) await this.setDone(att.id, !r.count);
         if (!r) stats.failed++;
-        else if (!r.count) stats.done++;
+        else if (!r.count) {
+          stats.done++;
+          if (queue.some(q => q.itemID === att.id)) {
+            queue = queue.filter(q => q.itemID !== att.id);
+            await Zotero.File.putContentsAsync(this.queuePath, JSON.stringify(queue, null, 1));
+          }
+        }
         else {
           stats.exported++;
           queue = queue.filter(q => q.path !== r.path);
@@ -281,6 +339,7 @@ var ResearchCompanion = {
       }
       line.setProgress(Math.round(n / pdfs.size * 100));
     }
+    await this.loadStatus();
     line.setText(`完成：导出 ${stats.exported} 篇，已全部有译文 ${stats.done} 篇，失败 ${stats.failed} 篇（多为扫描版 PDF）`);
     pw.startCloseTimer(15000);
   },
