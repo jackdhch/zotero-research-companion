@@ -20,7 +20,7 @@ Zotero 10 插件。它会在条目右侧栏用中文说明这篇论文讲了什�
 1. 到 [Releases](https://github.com/jackdhch/zotero-research-companion/releases) 下载 `.xpi`。
 2. Zotero → 工具 → 插件 → 齿轮 → 从文件安装附加组件。
 
-需要 Zotero 10。
+需要 Zotero 10。升级插件后请重启一次 Zotero，否则新加的菜单项会没有文字。
 
 ## 数据文件
 
