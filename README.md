@@ -55,7 +55,7 @@ python3 -I tools/build_data.py 论文.json 改进清单.json research-companion.
 
 [zotero-reading-bilingual](https://github.com/tianlrz/zotero-reading-bilingual) 会把译文缓存在 PDF 旁边的 `xxx.bilingual.json` 里。下面两个工具可以让你用任意模型提前翻好，之后打开论文时直接读缓存：
 
-1. 在 Zotero 里打开论文并切到阅读模式，然后在「工具 → 开发者 → Run JavaScript」里运行 `tools/export_paragraphs.js`（要勾选 Run as async function）。它会按双语插件自己的规则挑出待翻译的段落和表格，导出到 `xxx.to-translate.json`。整个过程不调用任何翻译接口。
+1. 先在双语插件设置里关掉「进入阅读模式时自动翻译」。然后在 Zotero 里打开论文并切到阅读模式，然后在「工具 → 开发者 → Run JavaScript」里运行 `tools/export_paragraphs.js`（要勾选 Run as async function）。它会按双语插件自己的规则挑出待翻译的段落和表格，导出到 `xxx.to-translate.json`。整个过程不调用任何翻译接口。
 2. `python3 -I tools/pretranslate.py split xxx.to-translate.json 工作目录`：把段落切成小批；每批翻好后存成 `batch_NN.zh.json`（与原文等长的字符串数组）。
 3. `python3 -I tools/pretranslate.py merge xxx.to-translate.json 工作目录`：把译文合并写进 `xxx.bilingual.json`。
 

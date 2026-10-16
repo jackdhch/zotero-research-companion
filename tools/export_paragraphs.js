@@ -1,6 +1,7 @@
 // 在 Zotero「工具 → 开发者 → Run JavaScript」里运行（勾选 Run as async function）。
 // 作用：让双语插件按它自己的规则挑出当前论文要翻的段落和表格，导出到 PDF 旁边的 xxx.to-translate.json。
 // 全程不调用任何翻译接口；已经翻过（有缓存）的段落不会导出。
+// 先在双语插件设置里关掉「进入阅读模式时自动翻译」，否则一切到阅读模式它就自己联网翻完了。
 const RB = Zotero.ReadingBilingual;
 const r = Zotero.Reader.getByTabID(Zotero.getMainWindow().Zotero_Tabs.selectedID);
 if (!RB || !r) return "请先打开一篇论文，并切到阅读模式";
