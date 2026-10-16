@@ -1,0 +1,89 @@
+// node test_rc.js —— 用假 Zotero 跑一遍导入和右侧栏查找，检查不重复建条目、标签分类正确
+const assert = require("assert");
+const fs = require("fs");
+const vm = require("vm");
+
+// Zotero 安装时强制要求的三项（Extension.sys.mjs:1875-1882），少一项就装不上
+const mf = require("./manifest.json").applications.zotero;
+for (const k of ["id", "update_url", "strict_max_version"]) assert.ok(mf[k], "manifest 缺 " + k);
+
+let nextID = 100, items = new Map(), atts = new Map(), collections = [];
+class Item {
+  constructor(type) { this.itemType = type; this.fields = {}; this.tags = new Set(); this.cols = new Set(); this.creators = []; this.atts = []; }
+  isRegularItem() { return true; }
+  getField(f) { return this.fields[f] || ""; }
+  setField(f, v) { this.fields[f] = v; }
+  setCreators(c) { this.creators = c; }
+  addTag(t) { this.tags.add(t); }
+  removeTag(t) { this.tags.delete(t); }
+  getTags() { return [...this.tags].map(tag => ({ tag })); }
+  addToCollection(id) { this.cols.add(id); }
+  getAttachments() { return this.atts; }
+  async saveTx() { if (!this.id) { this.id = nextID++; items.set(this.id, this); } }
+}
+const existing = new Item("journalArticle");
+existing.fields = { title: "Nezha-F: Design and Analysis of a Foldable and Self-Deployable HAUV", DOI: "10.1109/LRA.2023.3252343" };
+existing.saveTx();
+
+const Zotero = {
+  DataDirectory: { dir: "/tmp" }, isWin: false, Libraries: { userLibraryID: 1 },
+  File: { getContentsAsync: async () => JSON.stringify(data), pathToFile: p => ({ exists: () => p.endsWith("have.pdf") }) },
+  Items: { getAll: async () => [...items.values()], getAsync: async id => items.get(id), get: id => items.get(id) || atts.get(id) },
+  Item,
+  ItemTypes: { getID: t => t },
+  ItemFields: { getID: f => f, isValidForType: (f, t) => !(f === "DOI" && t === "book") },
+  Collections: { getByLibrary: () => collections },
+  Collection: class { async saveTx() { this.id = nextID++; collections.push(this); } },
+  Attachments: { linkFromFile: async ({ parentItemID }) => { let id = nextID++; atts.set(id, { attachmentContentType: "application/pdf" }); items.get(parentItemID).atts.push(id); } },
+  ProgressWindow: class { changeHeadline() {} addDescription() {} show() {} startCloseTimer() {}
+    get ItemProgress() { return class { setProgress() {} setText(t) { lastLine = t; } }; } },
+  debug() {}, logError(e) { throw new Error(e); },
+  ItemPaneManager: { registerSection: () => "pane" }, MenuManager: { registerMenu: () => "menu" },
+};
+let lastLine = "";
+const data = {
+  collection: "论文调研_测试",
+  airframe: { A1: { title: "统一弦长", what: "量实物", priority: "P0" } },
+  papers: [
+    { title: "Nezha-F: Design and Analysis of a Foldable and Self-Deployable HAUV", doi: "https://doi.org/10.1109/lra.2023.3252343",
+      topics: ["nezha", "morphing"], is_nezha: true, seen_local: true, local_path: "/mnt/c/x/have.pdf", airframe_ids: ["A1"], verify: "verified" },
+    { title: "Wing-in-ground effect vehicles", authors: "K. V. Rozhdestvensky", year: 2006, venue: "Progress in Aerospace Sciences",
+      doi: "10.1016/j.paerosci.2006.10.001", paper_type: "journal", topics: ["wig"], local_path: "/mnt/c/x/missing.pdf" },
+    { title: "地效翼船及其技术", authors: "云连", paper_type: "book", doi: "10.9/book", topics: ["wig"] },
+  ],
+};
+
+const ctx = { Zotero };
+vm.createContext(ctx);
+vm.runInContext(fs.readFileSync(__dirname + "/content/lib.js", "utf8"), ctx);
+vm.runInContext(fs.readFileSync(__dirname + "/content/rc.js", "utf8"), ctx);
+const RC = vm.runInContext("ResearchCompanion", ctx);
+
+(async () => {
+  await RC.init({ id: "t", rootURI: "x/" });
+  assert.strictEqual(RC.lookup(existing).airframe_ids[0], "A1", "右侧栏按 DOI 找到");
+
+  await RC.importAll();
+  assert.strictEqual(items.size, 3, "已有的 Nezha-F 不重复建，新建 2 条");
+  assert.ok(existing.tags.has("调研/哪吒团队") && existing.tags.has("本机看过") && existing.tags.has("机体改进依据"));
+  assert.strictEqual(existing.atts.length, 1, "本机存在的 PDF 挂上");
+  const wig = [...items.values()].find(i => i.fields.title === "Wing-in-ground effect vehicles");
+  assert.strictEqual(wig.fields.publicationTitle, "Progress in Aerospace Sciences");
+  assert.strictEqual(wig.fields.DOI, "10.1016/j.paerosci.2006.10.001");
+  assert.strictEqual(wig.creators[0].lastName, "Rozhdestvensky");
+  assert.deepStrictEqual(wig.atts, [], "本机不存在的 PDF 不挂");
+  const book = [...items.values()].find(i => i.itemType === "book");
+  assert.strictEqual(book.fields.extra, "DOI: 10.9/book", "书没有 DOI 字段时写进 Extra");
+  const names = collections.map(c => c.name).sort();
+  assert.deepStrictEqual(names, ["哪吒团队", "地效", "收折变形", "本机看过", "论文调研_测试"]);
+  assert.ok(lastLine.startsWith("完成：新建 2，已有条目补标签 1，挂上本机 PDF 1，失败 0"), lastLine);
+
+  data.papers[1].verify = "verified"; // 核实状态变了，再导入一次
+  await RC.loadData();
+  await RC.importAll(); // 再跑一次：不新增条目、不新增分类、不重复挂 PDF，核实标签被替换
+  assert.strictEqual(items.size, 3);
+  assert.strictEqual(collections.length, 5);
+  assert.ok(wig.tags.has("核实/已核实") && !wig.tags.has("核实/未核实"), [...wig.tags].join(","));
+  assert.strictEqual(existing.atts.length, 1);
+  console.log("rc ok");
+})().catch(e => { console.error(e); process.exit(1); });

@@ -1,0 +1,10 @@
+rc-pane-header =
+    .label = 研究伴读
+rc-pane-sidenav =
+    .tooltiptext = 研究伴读
+rc-menu =
+    .label = 研究伴读
+rc-menu-import =
+    .label = 导入论文调研清单
+rc-menu-reload =
+    .label = 重新读取数据文件

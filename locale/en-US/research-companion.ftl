@@ -1,0 +1,10 @@
+rc-pane-header =
+    .label = Research Companion
+rc-pane-sidenav =
+    .tooltiptext = Research Companion
+rc-menu =
+    .label = Research Companion
+rc-menu-import =
+    .label = Import literature survey
+rc-menu-reload =
+    .label = Reload data file
